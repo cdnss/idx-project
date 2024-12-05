@@ -1,4 +1,4 @@
-{
+{ 
   "name": "screenshot",
   "version": "1.0.0",
   "description": "Serverless PI to take screenshots of websites with Puppeteer.",
