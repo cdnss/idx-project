@@ -1,7 +1,7 @@
 {
   "name": "screenshot",
   "version": "1.0.0",
-  "description": "Serverless API to take screenshots of websites with Puppeteer.",
+  "description": "Serverless PI to take screenshots of websites with Puppeteer.",
   "dependencies": {
     "chrome-aws-lambda": "7.0.0",
     "puppeteer-core": "13.1.2",
