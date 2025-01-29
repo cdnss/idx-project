@@ -9,11 +9,10 @@
     
     
     pkgs.docker 
-    
-    # pkgs.go
-    # pkgs.python311
+    pkgs.deno
+    pkgs.python311
     # pkgs.python311Packages.pip
-    # pkgs.nodejs_20
+    pkgs.nodejs_20
     # pkgs.nodePackages.nodemon
   ];
 
@@ -33,12 +32,12 @@
          web = {
         #   # Example: run "npm run dev" with PORT set to IDX's defined port for previews,
         #   # and show it in IDX's web preview panel
-           command = ["deno" "run" "-A" "index.ts"];
-           manager = "web";
-           env = {
+        #   command = ["deno" "run" "-A" "index.ts"];
+        #   manager = "web";
+        #  env = {
         #     # Environment variables to set for your server
-            PORT = "$PORT";
-          };
+        #   PORT = "$PORT";
+        # };
         };
       };
     };
