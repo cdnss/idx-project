@@ -1,11 +1,12 @@
 // Import dependency
-// main.ts
 import * as cheerio from "https://esm.sh/cheerio@1.0.0-rc.12";
+
+// --- Utility Function: Header Filtering ---
 
 /**
  * Fungsi untuk menyaring header request agar tidak mengirimkan header sensitif.
  */
-export function filterRequestHeaders(headers: { [key: string]: string }): Headers {
+export function filterRequestHeaders(headers: Headers): Headers {
   const newHeaders = new Headers();
   const forbidden = [
     "host",
@@ -17,9 +18,9 @@ export function filterRequestHeaders(headers: { [key: string]: string }): Header
     "cookie",
     "authorization",
     "referer",
-  ];
+ ];
 
-  for (const [key, value] of Object.entries(headers)) {
+  for (const [key, value] of headers.entries()) {
     if (!forbidden.includes(key.toLowerCase())) {
       newHeaders.append(key, value);
     } else {
@@ -29,7 +30,7 @@ export function filterRequestHeaders(headers: { [key: string]: string }): Header
   return newHeaders;
 }
 
-// --- Definisi Selector yang Berbeda untuk Tiap Target ---
+// --- HTML Transformation Logic (kept the same) ---
 
 const commonUnwantedSelectors = [
     'script[src*="ad"], script[src*="analytics"], script[src*="googletagmanager"], script[src*="doubleclick"]',
@@ -40,29 +41,19 @@ const commonUnwantedSelectors = [
 const animeUnwantedSelectors = [
     ".ads", ".advertisement", ".banner", ".iklan",
     "#ad_box", "#ad_bawah", "#judi", "#judi2",
-    // Tambahkan selector spesifik untuk target anime di sini
     ...commonUnwantedSelectors
 ];
 
 const moviesUnwantedSelectors = [
     ".ads", ".advertisement", ".banner", ".iklan",
     "#ad_box", "#ad_bawah",
-    // Tambahkan selector spesifik untuk target movies di sini
     ...commonUnwantedSelectors
 ];
 
 const defaultUnwantedSelectors = [
     ...commonUnwantedSelectors
-    // Tambahkan selector spesifik untuk target default di sini
 ];
 
-// --- Fungsi Transformasi Terpisah ---
-
-/**
- * Menghapus elemen yang tidak diinginkan berdasarkan tipe target.
- * @param $ - Cheerio object.
- * @param targetType - Tipe target ('anime', 'movies', 'default').
- */
 function removeUnwantedElements($: cheerio.CheerioAPI, targetType: 'anime' | 'movies' | 'default'): void {
     let unwantedSelectors: string[] = [];
     switch (targetType) {
@@ -80,10 +71,7 @@ function removeUnwantedElements($: cheerio.CheerioAPI, targetType: 'anime' | 'mo
 
     unwantedSelectors.forEach((selector) => {
         try {
-            const removedCount = $(selector).remove().length;
-            if (removedCount > 0) {
-                // console.log(`[INFO] Removed ${removedCount} elements matching selector: ${selector}`); // Log ini bisa sangat verbose
-            }
+            $(selector).remove();
         } catch (e) {
             console.error(`[ERROR] Error removing elements with selector "${selector}" for ${targetType}:`, e);
         }
@@ -91,10 +79,6 @@ function removeUnwantedElements($: cheerio.CheerioAPI, targetType: 'anime' | 'mo
     console.log(`[INFO] Finished removing unwanted elements for ${targetType}.`);
 }
 
-/**
- * Menambahkan atribut lazy loading ke gambar dan iframe.
- * @param $ - Cheerio object.
- */
 function addLazyLoading($: cheerio.CheerioAPI): void {
     $("img, iframe").each((_, el) => {
         if (!$(el).attr("loading")) {
@@ -104,17 +88,10 @@ function addLazyLoading($: cheerio.CheerioAPI): void {
     console.log("[INFO] Added lazy loading to images and iframes.");
 }
 
-/**
- * Menulis ulang URL internal agar mengarah ke proxy.
- * @param $ - Cheerio object.
- * @param canonicalUrl - Canonical URL (URL proxy).
- * @param selectedTargetUrl - URL lengkap target yang di-fetch.
- * @param targetType - Tipe target ('anime', 'movies', 'default').
- */
 function rewriteUrls($: cheerio.CheerioAPI, canonicalUrl: string, selectedTargetUrl: string, targetType: 'anime' | 'movies' | 'default'): void {
     const attributesToRewrite = ['href', 'src', 'data-src', 'data-href', 'data-url'];
     const canonicalOrigin = new URL(canonicalUrl).origin;
-    const targetOrigin = new URL(selectedTargetUrl).origin; // Origin dari target yang sedang diproses
+    const targetOrigin = new URL(selectedTargetUrl).origin;
 
     $('*').each((_, el) => {
         attributesToRewrite.forEach(attr => {
@@ -123,97 +100,71 @@ function rewriteUrls($: cheerio.CheerioAPI, canonicalUrl: string, selectedTarget
                 try {
                     const url = new URL(originalValue, selectedTargetUrl);
 
-                    if (targetOrigin && (url.origin === targetOrigin || (url.host.endsWith('.' + new URL(selectedTargetUrl).hostname) && url.origin.startsWith('http'))) && !originalValue.startsWith('#') && !originalValue.startsWith('mailto:')) {
+                    if (targetOrigin && (url.origin === targetOrigin || (url.host.endsWith('.' + new URL(selectedTargetUrl).hostname) && url.origin.startsWith('http')) || (originalValue.startsWith('/') && !originalValue.startsWith('//'))) && !originalValue.startsWith('#') && !originalValue.startsWith('mailto:')) {
+                         let newPath = url.pathname;
 
-                        let newPath = url.pathname; // Path asli dari target
-
-                        // Pastikan path selalu dimulai dengan '/'
-                        if (!newPath.startsWith('/')) {
-                            newPath = '/' + newPath;
-                        }
-
-
-
-                        // Logika untuk menambahkan prefix path proxy kembali ke URL internal
-                        let prefix = '';
-                        if (targetType === 'anime') {
-                            prefix = '/anime';
-                        } else if (targetType === 'movies') {
-                            prefix = '/movies';
-                        }
-                        // Tambahkan prefix hanya jika belum ada, atau jika path aslinya bukan root '/'
-                        // dan prefix bukan string kosong ('')
-                         if (prefix !== '' && !newPath.startsWith(prefix + '/') && !(newPath === '/' && prefix !== '')) {
-                            newPath = prefix + (newPath.startsWith('/') ? newPath : '/' + newPath);
-                         } else if (newPath === '/' && prefix !== '') {
-                             // Handle root path dari target ketika targetType punya prefix
-                              newPath = prefix + '/';
+                         if (!newPath.startsWith('/')) {
+                             newPath = '/' + newPath;
                          }
 
-                        const proxiedUrl = new URL(newPath + url.search + url.hash, canonicalOrigin);
-                        proxiedUrl.protocol = 'https';
-                        $(el).attr(attr, proxiedUrl.toString());
-                        // console.log(`[INFO] Rewrote URL for ${targetType}: ${originalValue} -> ${proxiedUrl.toString()}`); // Verbose log
+                         let prefix = '';
+                         if (targetType === 'anime') {
+                             prefix = '/anime';
+                         } else if (targetType === 'movies') {
+                             prefix = '/movies';
+                         }
 
-                    } else if (!url.protocol.startsWith('http') && canonicalOrigin && !originalValue.startsWith('//')) {
-                         // Tangani path relatif yang tidak diawali '/' atau '//', jadikan absolut dengan origin proxy
-                         const proxiedUrl = new URL(originalValue, canonicalOrigin);
+                          if (prefix !== '' && !newPath.startsWith(prefix + '/')) {
+                             newPath = prefix + newPath;
+                          }
+
+                         const proxiedUrl = new URL(newPath + url.search + url.hash, canonicalOrigin);
+                         proxiedUrl.protocol = 'https';
                          $(el).attr(attr, proxiedUrl.toString());
-                          // console.log(`[INFO] Rewrote relative URL for ${targetType}: ${originalValue} -> ${proxiedUrl.toString()}`); // Verbose log
 
-                    } else if (originalValue.startsWith('//') && canonicalOrigin) {
-                        // Tangani URL protokol-agnostik //site.com/path
+                     } else if (originalValue.startsWith('//') && canonicalOrigin) {
                          const absoluteUrlFromTarget = new URL(`https:${originalValue}`, selectedTargetUrl);
-                         if (targetOrigin && (absoluteUrlFromTarget.origin === targetOrigin || (absoluteUrlFromTarget.host.endsWith('.' + new URL(selectedTargetUrl).hostname) && absoluteUrlFromTarget.origin.startsWith('http')))) {
+                          if (targetOrigin && (absoluteUrlFromTarget.origin === targetOrigin || (absoluteUrlFromTarget.host.endsWith('.' + new URL(selectedTargetUrl).hostname) && absoluteUrlFromTarget.origin.startsWith('http')))) {
 
-                            let newPath = absoluteUrlFromTarget.pathname;
-                            let prefix = '';
-                            if (targetType === 'anime') {
-                                prefix = '/anime';
-                            } else if (targetType === 'movies') {
-                                prefix = '/movies';
-                            }
-                             if (prefix !== '' && !newPath.startsWith(prefix + '/') && !(newPath === '/' && prefix !== '')) {
-                                newPath = prefix + (newPath.startsWith('/') ? newPath : '/' + newPath);
-                            } else if (newPath === '/' && prefix !== '') {
-                                 newPath = prefix + '/';
-                            }
+                             let newPath = absoluteUrlFromTarget.pathname;
+                             let prefix = '';
+                             if (targetType === 'anime') {
+                                 prefix = '/anime';
+                             } else if (targetType === 'movies') {
+                                 prefix = '/movies';
+                             }
+                             if (prefix !== '' && !newPath.startsWith(prefix + '/')) {
+                                 newPath = prefix + newPath;
+                             }
 
-                           const proxiedUrl = new URL(newPath + absoluteUrlFromTarget.search + absoluteUrlFromTarget.hash, canonicalOrigin);
-                           proxiedUrl.protocol = 'https';
-                            $(el).attr(attr, proxiedUrl.toString());
-                             // console.log(`[INFO] Rewrote protocol-agnostic URL for ${targetType}: ${originalValue} -> ${proxiedUrl.toString()}`); // Verbose log
-                         }
-                    }
+                            const proxiedUrl = new URL(newPath + absoluteUrlFromTarget.search + absoluteUrlFromTarget.hash, canonicalOrigin);
+                            proxiedUrl.protocol = 'https';
+                             $(el).attr(attr, proxiedUrl.toString());
+                          }
+                     }
                 } catch (e) {
-                    // Abaikan atribut yang nilainya bukan URL yang valid
-                    // console.warn(`[WARN] Could not parse URL "${originalValue}" for rewriting in main.ts:`, e); // Verbose log
+                    // console.warn(`[WARN] Could not parse URL "${originalValue}" for potential rewriting in main.ts:`, e);
                 }
             }
- });
+        });
     });
 
-    // Modify iframe src to be just the path
-    // This will now be handled by the jQuery script block below
-    // $('iframe').each((_, el) => {
-    //     const originalSrc = $(el).attr('src');
-    //  if (originalSrc) {
-    //  $(el).attr('src', new URL(originalSrc, selectedTargetUrl).pathname + new URL(originalSrc, selectedTargetUrl).search + new URL(originalSrc, selectedTargetUrl).hash);
-    //  }
-    // });
     console.log(`[INFO] Rewrote internal URLs for ${targetType}.`);
 }
 
 function addJQueryIframePathScript($: cheerio.CheerioAPI): void {
     const script = `
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
 <script>
 $(document).ready(function() {
     $('iframe').each(function() {
         var src = $(this).attr('src');
         if (src) {
             try {
-                var url = new URL(src, window.location.href); // Use window.location.href as base for relative URLs
-                $(this).attr('src', url.pathname + url.search + url.hash);
+                var url = new URL(src, window.location.href);
+                var pathnameWithPrefix = url.pathname;
+                 $(this).attr('src', pathnameWithPrefix + url.search + url.hash);
+
             } catch (e) {
                 console.error('Error processing iframe src:', src, e);
             }
@@ -222,22 +173,16 @@ $(document).ready(function() {
 });
 </script>
 `;
-    $('body').append(script);
-    console.log("[INFO] Added jQuery script for iframe path manipulation.");
+    const target = $('head').length ? $('head') : $('body');
+    if (target.length) {
+      target.append(script);
+      console.log("[INFO] Added jQuery script for iframe path manipulation.");
+    } else {
+      console.warn("[WARN] Could not find <head> or <body> to add jQuery script.");
+    }
 }
 
 
-/**
- * Fungsi utama untuk memproses konten HTML dari target.
- * Mengorkestrasi pemanggilan fungsi transformasi yang lebih kecil.
- *
- * @param html - Konten HTML asli.
- * @param canonicalUrl - Canonical URL (URL proxy).
- * @param targetOrigin - Origin dari situs target.
- * @param selectedTargetUrl - URL lengkap target yang di-fetch.
- * @param targetType - Tipe target yang diproses ('anime', 'movies', 'default').
- * @returns HTML yang telah dimodifikasi.
- */
 export function transformHTML(html: string, canonicalUrl: string, targetOrigin: string | null, selectedTargetUrl: string, targetType: 'anime' | 'movies' | 'default'): string {
   console.log(`[INFO] Starting HTML transformation in main.ts for ${targetType} target.`);
 
@@ -246,15 +191,16 @@ export function transformHTML(html: string, canonicalUrl: string, targetOrigin: 
     $ = cheerio.load(html);
   } catch (e) {
     console.error("[ERROR] Failed to load HTML with Cheerio in main.ts:", e);
-    return html; // Kembalikan HTML asli jika parsing gagal
+    return html;
   }
 
-  if (targetType === 'movies') { // Only add for movies target
-    addJQueryIframePathScript($);
-  }
   removeUnwantedElements($, targetType);
   addLazyLoading($);
   rewriteUrls($, canonicalUrl, selectedTargetUrl, targetType);
+
+  if (targetType === 'movies') {
+     addJQueryIframePathScript($);
+  }
 
   let processedHtml = '';
   try {
@@ -264,7 +210,6 @@ export function transformHTML(html: string, canonicalUrl: string, targetOrigin: 
     return html;
   }
 
-  // Tambahkan DOCTYPE jika hilang
   if (!/^<!DOCTYPE\s+/i.test(processedHtml)) {
     processedHtml = "<!DOCTYPE html>\n" + processedHtml;
     console.log("[INFO] Added missing DOCTYPE.");
@@ -272,4 +217,194 @@ export function transformHTML(html: string, canonicalUrl: string, targetOrigin: 
 
   console.log(`[INFO] HTML transformation finished for ${targetType} target.`);
   return processedHtml;
+}
+
+
+// --- NEW Common Proxy Request Handler ---
+
+/**
+ * Handles fetching and processing of a proxied request with common logic.
+ * This function contains the duplicated logic from animeHandler, moviesHandler, and default fallback.
+ *
+ * @param request - The incoming Request object.
+ * @param requestUrl - The parsed URL of the incoming request.
+ * @param canonicalUrl - The base URL of the proxy itself.
+ * @param selectedTargetUrl - The determined target URL for this request.
+ * @param targetType - The type of target ('anime', 'movies', 'default') for transformation logic.
+ * @param corsHeaders - Headers for CORS.
+ * @param filterHeaders - Reference to the filterRequestHeaders function.
+ * @param transformHtml - Reference to the transformHTML function.
+ * @param targetPathname - The pathname segment to use for the target URL (already adjusted for prefix).
+ * @returns A Promise resolving to a Response object.
+ */
+export async function handleGeneralProxyRequest(
+    request: Request,
+    requestUrl: URL,
+    canonicalUrl: string,
+    selectedTargetUrl: string,
+    targetType: 'anime' | 'movies' | 'default',
+    corsHeaders: Headers,
+    filterHeaders: typeof filterRequestHeaders,
+    transformHtml: typeof transformHTML,
+    targetPathname: string // Pathname after stripping the route prefix, e.g., '/' or '/some/page'
+): Promise<Response> {
+    try {
+        const targetOrigin = new URL(selectedTargetUrl).origin;
+
+        // Form the target URL for fetch
+        const targetUrl = new URL(selectedTargetUrl);
+        targetUrl.pathname = targetPathname; // Use the passed targetPathname
+        targetUrl.search = requestUrl.search; // Copy original query string
+
+        console.log(`[INFO] Fetching target URL for ${targetType}: ${targetUrl.toString()}`);
+
+        const filteredHeaders = filterHeaders(request.headers);
+
+        const targetResponse = await fetch(targetUrl.toString(), {
+            method: request.method,
+            headers: filteredHeaders,
+            body: request.body,
+            redirect: 'manual' // Handle redirects manually
+        });
+
+        console.log(`[INFO] Received response from ${targetType} target: Status ${targetResponse.status}`);
+
+        // --- Penanganan Redirect 3xx ---
+        if (targetResponse.status >= 300 && targetResponse.status < 400 && targetResponse.headers.has('location')) {
+            const location = targetResponse.headers.get('location');
+            if (!location) {
+                console.error(`[ERROR] ${targetType} target redirect response missing Location header.`);
+                const errorHeaders = new Headers(corsHeaders);
+                return new Response("Internal Server Error: Invalid redirect response", { status: 500, headers: errorHeaders });
+            }
+            console.log(`[INFO] ${targetType} target responded with redirect to: ${location}`);
+            try {
+                // Resolving URL location relative to the targetUrl being fetched
+                const redirectedUrl = new URL(location, targetUrl);
+                let proxiedRedirectUrl = redirectedUrl.toString();
+                const currentTargetOrigin = new URL(selectedTargetUrl).origin;
+                const canonicalOrigin = new URL(canonicalUrl).origin;
+
+                // Logic to rewrite redirect URL to point back to the proxy host
+                // Check if the redirect is pointing to the origin of the current target or its subdomain
+                // or if it's a relative path starting with '/'
+                 if (currentTargetOrigin && (redirectedUrl.origin === currentTargetOrigin || (redirectedUrl.host.endsWith('.' + new URL(selectedTargetUrl).hostname) && redirectedUrl.origin.startsWith('http')) || (location.startsWith('/') && !location.startsWith('//')))) {
+
+                      let prefix = '';
+                      if (targetType === 'anime') {
+                          prefix = '/anime';
+                      } else if (targetType === 'movies') {
+                          prefix = '/movies';
+                      }
+                      // Combine the original route prefix with the redirect path from the target
+                      // Ensure the target redirect path starts with '/'
+                      const targetRedirectPath = redirectedUrl.pathname;
+                      let newPath = prefix + (targetRedirectPath.startsWith('/') ? targetRedirectPath : '/' + targetRedirectPath);
+
+                      // Create a new URL with the proxy origin and the adjusted path
+                      const finalRedirectUrl = new URL(newPath + redirectedUrl.search + redirectedUrl.hash, canonicalOrigin);
+                      finalRedirectUrl.protocol = 'https'; // Ensure HTTPS
+                      proxiedRedirectUrl = finalRedirectUrl.toString();
+
+                      console.log(`[INFO] Rewrote ${targetType} redirect URL to proxy host (${canonicalOrigin}): ${proxiedRedirectUrl}`);
+
+                 } else {
+                      console.log(`[INFO] Redirecting ${targetType} to non-${targetType} domain or already relative path, passing through location.`);
+                      // If redirecting to a different domain, pass through the URL as is (unless it's relative)
+                      // Ensure the URL is absolute if it was originally relative to the proxy origin
+                       if (!redirectedUrl.protocol.startsWith('http')) {
+                           // If still relative (e.g., /path), make it absolute with the proxy origin
+                           proxiedRedirectUrl = new URL(location, canonicalOrigin).toString();
+                       } else {
+                           // If already absolute to another domain, use the original URL
+                           proxiedRedirectUrl = location;
+                       }
+                        // Ensure HTTPS if protocol exists
+                       if (proxiedRedirectUrl.startsWith('http://')) {
+                            proxiedRedirectUrl = proxiedRedirectUrl.replace('http://', 'https://');
+                       }
+                 }
+
+
+                const redirectHeaders = new Headers(corsHeaders);
+                // Copy headers from the target response except Location, Content-Encoding, Content-Length
+                for (const [key, value] of targetResponse.headers) {
+                     if (key.toLowerCase() !== 'location' && key.toLowerCase() !== "content-encoding" && key.toLowerCase() !== "content-length") {
+                          redirectHeaders.set(key, value);
+                     }
+                }
+                 // Set Location header with the rewritten URL
+                redirectHeaders.set('Location', proxiedRedirectUrl);
+
+                return new Response(null, {
+                     status: targetResponse.status,
+                     statusText: targetResponse.statusText,
+                     headers: redirectHeaders,
+                });
+
+            } catch (e) {
+                console.error(`[ERROR] Failed to process ${targetType} redirect location (${location}):`, e);
+                 // Fallback response redirect if processing fails, copy original headers
+                 const responseHeaders = new Headers(corsHeaders);
+                 for (const [key, value] of targetResponse.headers) {
+                    if (key.toLowerCase() !== "content-encoding" && key.toLowerCase() !== "content-length") {
+                         responseHeaders.set(key, value);
+                    }
+                 }
+                 return new Response(targetResponse.body, { // Body might be empty for 3xx
+                     status: targetResponse.status,
+                     statusText: targetResponse.statusText,
+                     headers: responseHeaders,
+                 });
+            }
+        }
+        // --- Akhir Penanganan Redirect ---
+
+
+        const contentType = targetResponse.headers.get("content-type") || "";
+        console.log(`[INFO] ${targetType} target response Content-Type: ${contentType}`);
+
+        if (contentType.includes("text/html")) {
+            const htmlContent = await targetResponse.text();
+            console.log(`[INFO] Processing ${targetType} HTML content.`);
+
+            // Call transformHTML using the passed function reference
+            const modifiedHtml = transformHtml(htmlContent, canonicalUrl, targetOrigin, selectedTargetUrl, targetType);
+
+            const responseHeaders = new Headers(corsHeaders);
+            // Copy headers from the target response except Content-Encoding, Content-Length, Content-Type
+            for (const [key, value] of targetResponse.headers) {
+                if (key.toLowerCase() !== "content-encoding" && key.toLowerCase() !== "content-length" && key.toLowerCase() !== "content-type") {
+                    responseHeaders.set(key, value);
+                }
+            }
+            // Set the correct Content-Type for the modified HTML
+            responseHeaders.set("Content-Type", "text/html; charset=utf-8");
+
+            return new Response(modifiedHtml, {
+                status: targetResponse.status,
+                statusText: targetResponse.statusText,
+                headers: responseHeaders,
+            });
+        } else {
+            // Proxy non-HTML assets directly
+            console.log(`[INFO] Proxying non-HTML content for ${targetType}.`);
+            const responseHeaders = new Headers(corsHeaders);
+            // Copy headers from the target response except Content-Encoding, Content-Length
+            for (const [key, value] of targetResponse.headers) {
+                 if (key.toLowerCase() === "content-encoding" || key.toLowerCase() === "content-length") {
+                     continue;
+                 }
+                 responseHeaders.set(key, value);
+            }
+            return new Response(targetResponse.body, { // Stream body
+                status: targetResponse.status,
+                statusText: targetResponse.statusText,
+                headers: responseHeaders,
+            });
+        }
+    } catch (error) {
+        console.error(`[ERROR] Error fetching or processing ${targetType} target ${selectedTargetUrl}:`, error);
+        return new Response("Internal Server Error", { status: 500, headers: corsHeaders });
+    }
 }
